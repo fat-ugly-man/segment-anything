@@ -55,8 +55,45 @@ mask_generator3 = SamAutomaticMaskGenerator(
     min_mask_region_area=50,  #最小mask面积，会使用opencv滤除掉小面积的区域
 )
 
+def show_nums(w, h, dis1, dis2):
+    CI = w / h
+    CVA = abs(dis1 - dis2)
+    CVAI = CVA / max(dis1, dis2) * 100
+    CI_tag = ''
+    CVAI_tag = ''
+    if CI <= 0.6:
+        CI_tag = '舟状头（重度）'
+    elif CI > 0.6 and CI <= 0.7:
+        CI_tag = '舟状头（中度）'
+    elif CI > 0.7 and CI <= 0.75:
+        CI_tag = '舟状头（轻度）'
+    elif CI > 0.75 and CI < 0.85:
+        CI_tag = '正常（无扁头，无舟状头）'
+    elif CI >= 0.85 and CI < 0.9:
+        CI_tag = '扁头（轻度）'
+    elif CI >= 0.9 and CI < 0.99:
+        CI_tag = '扁头（中度）'
+    else:
+        CI_tag = '扁头（重度）'
+
+    if CVAI < 3.5:
+        CVAI_tag = '正常（无斜头）'
+    elif CVAI >= 3.5 and CVAI < 6.25:
+        CVAI_tag = '斜头畸形（轻度）'
+    elif CVAI >= 6.25 and CVAI < 8.75:
+        CVAI_tag = '斜头畸形（中度）'
+    elif CVAI >= 8.75 and CVAI < 11:
+        CVAI_tag = '斜头畸形（重度）'
+    elif CVAI >= 11:
+        CVAI_tag = '斜头畸形（超重度）'
+
+    print ('CI:{}'.format(CI))
+    print ('CI测试结果:{}'.format(CI_tag))
+    print ('CVAI:{}'.format(CVAI))
+    print ('CVAI测试结果:{}'.format(CVAI_tag))
+
 # 定义旋转函数
-def rotate_line(img, cx, cy, angle, length):
+def rotate_line(img, cnt, cx, cy, angle, length):
     # 计算旋转矩阵
     #M = cv2.getRotationMatrix2D((cx, cy), angle, 1)
     # 旋转图像
@@ -77,9 +114,39 @@ def rotate_line(img, cx, cy, angle, length):
             continue
         break
     
+    pt1 = (int(x1), int(y1))
+    pt2 = (int(x2), int(y2))
     # 绘制旋转后的线段
-    cv2.line(img, (int(x1), int(y1)), (int(x2), int(y2)), (255, 255, 255), 2)
-    return img
+    #cv2.line(img, pt1, pt2, (255, 255, 255), 2)
+   
+    final = []
+    flag = False
+    intersections = []
+    cha = []
+    line_cnt = np.array([pt1, pt2])
+   
+    for pt in cnt:
+        pt = (int(pt[0][0]), int(pt[0][1]))
+        dist = cv2.pointPolygonTest(line_cnt, pt, True)
+        if abs(dist) < 20:
+            flag = True
+            intersections.append(pt)
+            cha.append(abs(dist))
+        else:
+            if len(intersections) > 0:
+                min_cha = min(cha)
+                min_index = cha.index(min_cha)
+                final.append(intersections[min_index])
+                #cv2.circle(img, intersections[min_index], 5, (255, 255, 0), -1) 
+            flag = False
+            intersections = []
+            cha = []
+    if len(final) == 2:
+        cv2.line(img, final[0], final[1], (255, 255, 255), 2)
+        dis = math.sqrt((final[0][0] - final[1][0])*(final[0][0] - final[1][0]) + (final[0][1] - final[1][1])*(final[0][1] - final[1][1]))
+        return img, dis
+    else:
+        return img, -1
 
 def show_anns(anns):
     if len(anns) == 0:
@@ -99,8 +166,8 @@ def show_anns(anns):
         if hh < 0.95 and ww < 0.95:
             break
         pos += 1
-    print (image.shape)
-    print (sorted_anns[pos]['bbox'])
+    #print (image.shape)
+    #print (sorted_anns[pos]['bbox'])
     max_err = 3
     now_bbox = sorted_anns[pos]['bbox']
     if now_bbox[0] < max_err or now_bbox[1] < max_err:
@@ -139,14 +206,17 @@ def show_anns(anns):
     length = int(math.sqrt(now_bbox[2] * now_bbox[2] + now_bbox[3] * now_bbox[3]))
 
     # 旋转线段30度
-    temp = rotate_line(temp, cx, cy, angle + math.radians(60), length * 2)
+    temp, dis1 = rotate_line(temp, cnts[0], cx, cy, angle + math.radians(60), length * 2)
     # 旋转线段-30度
-    temp = rotate_line(temp, cx, cy, angle - math.radians(60), length * 2)
- 
+    temp, dis2 = rotate_line(temp, cnts[0], cx, cy, angle - math.radians(60), length * 2)
+    
+    if dis1 == -1 or dis2 == -1:
+        return False
     color = np.array([0 / 255, 0 / 255, 255 / 255, 0.8])
     rectangle_mask = temp / 255 * color.reshape(1, 1, -1)
     plt.imshow(rectangle_mask)
     
+    show_nums(now_bbox[2], now_bbox[3], dis1, dis2)
     #ax.imshow(img)
     return True
 
@@ -155,8 +225,8 @@ ious = [0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.6, 0.5]
 stability_scores = [0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.6, 0.5]
 for root, dirs, files in os.walk("./images/"):
     for file_name in files:
-        if file_name != '0.jpg':
-            continue
+        #if file_name != '23.png':
+        #    continue
         print (file_name)
         image = cv2.imread('images/' + file_name)
         image = cv2.resize(image, None, fx=0.5, fy=0.5)
@@ -164,26 +234,6 @@ for root, dirs, files in os.walk("./images/"):
 
         plt.figure(figsize=(16,16))
         plt.imshow(image)
-        
-        '''
-        for model in models:
-            for iou in ious:
-                for stability_score in stability_scores:
-                    print (iou, stability_score)
-                    mask_generator3 = SamAutomaticMaskGenerator(
-                        model=model,
-                        points_per_side=32, # 控制采样点的间隔，值越小，采样点越密集
-                        pred_iou_thresh=iou, # mask的iou阈值
-                        stability_score_thresh=stability_score, # mask的稳定性阈值
-                        crop_n_layers=1,
-                        crop_n_points_downscale_factor=2,
-                        min_mask_region_area=50,  # 最小mask面积，会使用opencv滤除掉小面积的区域
-                    )
-                    masks3 = mask_generator3.generate(image)
-                    suc_state = show_anns(masks3)
-                    if suc_state:
-                        exit(0)
-        '''
         
         masks3 = mask_generator3.generate(image)
         suc_state = show_anns(masks3)
@@ -194,6 +244,9 @@ for root, dirs, files in os.walk("./images/"):
                 masks = mask_generator.generate(image)
                 suc_state = show_anns(masks)
         
+        if not suc_state:
+            print ('识别失败！')
+            continue
         plt.axis('off')
         #plt.show()
         fig = plt.gcf()
